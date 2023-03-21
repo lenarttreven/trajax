@@ -758,7 +758,7 @@ def gaussian_samples(random_key, mean, stdev, control_low, control_high,
     return samples
 
 
-@partial(jit, static_argnums=(0, 1, 9))
+@partial(jit, static_argnums=(0, 1, 7))
 def cem(cost,
         dynamics,
         init_state,
@@ -823,7 +823,7 @@ def cem(cost,
     return X, mean, obj
 
 
-@partial(jit, static_argnums=(0, 1, 9))
+@partial(jit, static_argnums=(0, 1, 7))
 def random_shooting(cost,
                     dynamics,
                     init_state,
