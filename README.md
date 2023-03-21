@@ -26,7 +26,7 @@ Trajax is currently a work in progress, maintained by a few individuals at Googl
 To install directly from github using `pip`:
 
 ```bash
-$ pip install git+https://github.com/google/trajax
+$ pip install git+https://github.com/lenarttreven/trajax
 ```
 
 Alternatively, to install from source:
