@@ -804,6 +804,7 @@ def cem(cost,
     stdev = np.array([(control_high - control_low) / 2.] * init_controls.shape[0])
     obj_fn = partial(objective, cost, dynamics)
 
+    # Todo (lenart): Track the best particle and return the best of the best, change to lax.scan
     def loop_body(_, args):
         mean, stdev, random_key = args
         random_key, rng = random.split(random_key)
