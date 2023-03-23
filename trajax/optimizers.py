@@ -837,8 +837,24 @@ def cem(cost,
     obj = output.best_costs[best_index]
 
     X = rollout(dynamics, U, init_state)
-    # obj = objective(cost, dynamics, U, init_state)
     return X, U, obj
+
+
+
+
+
+def ilqr_with_cem_warmstart(
+        cost,
+        dynamics,
+        init_state,
+        init_controls,
+        control_low,
+        control_high,
+        cem_random_key=None,
+        cem_hyperparams=None
+):
+    pass
+
 
 
 @partial(jit, static_argnums=(0, 1, 7))
