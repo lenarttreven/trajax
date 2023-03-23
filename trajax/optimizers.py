@@ -872,7 +872,7 @@ def ilqr_with_cem_warmstart(
 ):
     X_cem, U_cem, obj_cem = cem(cost, dynamics, init_state, init_controls, control_low, control_high,
                                 random_key=cem_random_key, hyperparams=cem_hyperparams)
-    print(f'Objective after CEM warmstart: {obj_cem}')
+    # print(f'Objective after CEM warmstart: {obj_cem}')
     return ilqr(cost, dynamics, init_state, U_cem, ilqr_hyperparams)
 
 
