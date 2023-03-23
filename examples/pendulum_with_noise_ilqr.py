@@ -63,12 +63,9 @@ start_time = time.time()
 out = ilqr(cost_fn, dynamics_fn, initial_state, initial_actions)
 print("Time taken: ", time.time() - start_time)
 
-xs = out[0]
-us = out[1]
-
-plt.plot(ts, xs[:-1, :], label="xs")
+plt.plot(ts, out.xs[:-1, :], label="xs")
 plt.title("CEM")
-plt.plot(ts, us[:, :u_dim], label="us")
-plt.plot(ts, jnp.tanh(us[:, u_dim:]), label="etas")
+plt.plot(ts, out.us[:, :u_dim], label="us")
+plt.plot(ts, jnp.tanh(out.us[:, u_dim:]), label="etas")
 plt.legend()
 plt.show()

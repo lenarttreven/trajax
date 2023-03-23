@@ -48,7 +48,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial  # pylint: disable=g-importing-member
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 
 import jax
 import jax.numpy as np
@@ -431,6 +431,16 @@ class ILQRHyperparams(NamedTuple):
     alpha_min: float = 0.00005
 
 
+class ILQRResult(NamedTuple):
+    xs: np.ndarray
+    us: np.ndarray
+    obj: float
+    gradient: np.ndarray
+    adjoints: np.ndarray
+    lqr: Tuple
+    it: float
+
+
 def ilqr(cost,
          dynamics,
          x0,
@@ -457,9 +467,10 @@ def ilqr(cost,
     cost_fn, cost_args = custom_derivatives.closure_convert(cost, x0, U[0], 0)
     dynamics_fn, dynamics_args = custom_derivatives.closure_convert(
         dynamics, x0, U[0], 0)
-    return ilqr_base(cost_fn, dynamics_fn, x0, U, tuple(cost_args),
-                     tuple(dynamics_args), hyperparams.maxiter, hyperparams.grad_norm_threshold, hyperparams.make_psd,
-                     hyperparams.psd_delta, hyperparams.alpha_0, hyperparams.alpha_min)
+    return ILQRResult(
+        *ilqr_base(cost_fn, dynamics_fn, x0, U, tuple(cost_args), tuple(dynamics_args), hyperparams.maxiter,
+                   hyperparams.grad_norm_threshold, hyperparams.make_psd, hyperparams.psd_delta, hyperparams.alpha_0,
+                   hyperparams.alpha_min))
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
@@ -847,6 +858,7 @@ def cem(cost,
     return X, U, obj
 
 
+@partial(jit, static_argnums=(0, 1, 7, 8))
 def ilqr_with_cem_warmstart(
         cost,
         dynamics,
@@ -855,9 +867,13 @@ def ilqr_with_cem_warmstart(
         control_low,
         control_high,
         cem_random_key=None,
-        cem_hyperparams=None
+        cem_hyperparams=CEMHyperparams(),
+        ilqr_hyperparams=ILQRHyperparams(),
 ):
-    pass
+    X_cem, U_cem, obj_cem = cem(cost, dynamics, init_state, init_controls, control_low, control_high,
+                                random_key=cem_random_key, hyperparams=cem_hyperparams)
+    print(f'Objective after CEM warmstart: {obj_cem}')
+    return ilqr(cost, dynamics, init_state, U_cem, ilqr_hyperparams)
 
 
 @partial(jit, static_argnums=(0, 1, 7))
@@ -1056,12 +1072,9 @@ def constrained_ilqr(
             dynamics,
             x0,
             U,
-            grad_norm_threshold=grad_norm_threshold,
-            make_psd=make_psd,
-            psd_delta=psd_delta,
-            alpha_0=alpha_0,
-            alpha_min=alpha_min,
-            maxiter=maxiter_ilqr)
+            ILQRHyperparams(maxiter=maxiter_ilqr, grad_norm_threshold=grad_norm_threshold, make_psd=make_psd,
+                            psd_delta=psd_delta, alpha_0=alpha_0, alpha_min=alpha_min, )
+        )
 
         # evalute constraints
         U_pad = pad(U)
