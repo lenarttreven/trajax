@@ -758,6 +758,19 @@ def gaussian_samples(random_key, mean, stdev, control_low, control_high,
     return samples
 
 
+class CEM_scan_carry(NamedTuple):
+    """State of CEM scan loop."""
+    mean: np.ndarray
+    stdev: np.ndarray
+    random_key: np.ndarray
+
+
+class CEM_scan_output(NamedTuple):
+    """Output of CEM scan loop."""
+    best_controls: np.ndarray
+    best_costs: np.ndarray
+
+
 @partial(jit, static_argnums=(0, 1, 7))
 def cem(cost,
         dynamics,
@@ -804,24 +817,28 @@ def cem(cost,
     stdev = np.array([(control_high - control_low) / 2.] * init_controls.shape[0])
     obj_fn = partial(objective, cost, dynamics)
 
-    # Todo (lenart): Track the best particle and return the best of the best, change to lax.scan
-    def loop_body(_, args):
-        mean, stdev, random_key = args
-        random_key, rng = random.split(random_key)
-        controls = gaussian_samples(rng, mean, stdev, control_low, control_high,
+    def scan_body(carry: CEM_scan_carry, _):
+        random_key, rng = random.split(carry.random_key)
+        controls = gaussian_samples(rng, carry.mean, carry.stdev, control_low, control_high,
                                     hyperparams)
         costs = vmap(obj_fn, in_axes=(0, None))(controls, init_state)
-        mean, stdev = cem_update_mean_stdev(mean, stdev, controls, costs,
+        mean, stdev = cem_update_mean_stdev(carry.mean, carry.stdev, controls, costs,
                                             hyperparams)
-        return mean, stdev, random_key
+        best_index = np.argmin(costs)
+        best_control, best_cost = controls[best_index], costs[best_index]
+        return CEM_scan_carry(mean=mean, stdev=stdev, random_key=random_key), CEM_scan_output(
+            best_controls=best_control, best_costs=best_cost)
 
-    # TODO(sindhwani): swap with lax.scan to make this optimizer differentiable.
-    mean, stdev, random_key = lax.fori_loop(0, hyperparams.max_iter, loop_body,
-                                            (mean, stdev, random_key))
+    initial_carry = CEM_scan_carry(mean, stdev, random_key)
+    last_carry, output = lax.scan(scan_body, initial_carry, None, length=hyperparams.max_iter)
 
-    X = rollout(dynamics, mean, init_state)
-    obj = objective(cost, dynamics, mean, init_state)
-    return X, mean, obj
+    best_index = np.argmin(output.best_costs)
+    U = output.best_controls[best_index]
+    obj = output.best_costs[best_index]
+
+    X = rollout(dynamics, U, init_state)
+    # obj = objective(cost, dynamics, U, init_state)
+    return X, U, obj
 
 
 @partial(jit, static_argnums=(0, 1, 7))
