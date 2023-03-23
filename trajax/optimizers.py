@@ -412,16 +412,30 @@ def project_psd_cone(Q, delta=0.0):
     return 0.5 * (Q_plus + Q_plus.T)
 
 
+class ILQRHyperparams(NamedTuple):
+    """
+    maxiter: maximum iterations.
+    grad_norm_threshold: tolerance for stopping optimization.
+    make_psd: whether to zero negative eigenvalues after quadratization.
+    psd_delta: The delta value to make the problem PSD. Specifically, it will
+        ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
+        with respect to state and control are always positive definite.
+    alpha_0: initial line search value.
+    alpha_min: minimum line search value.
+    """
+    maxiter: int = 100
+    grad_norm_threshold: float = 1e-4
+    make_psd: bool = False
+    psd_delta: float = 0.0
+    alpha_0: float = 1.0
+    alpha_min: float = 0.00005
+
+
 def ilqr(cost,
          dynamics,
          x0,
          U,
-         maxiter=100,
-         grad_norm_threshold=1e-4,
-         make_psd=False,
-         psd_delta=0.0,
-         alpha_0=1.0,
-         alpha_min=0.00005):
+         hyperparams=ILQRHyperparams()):
     """Iterative Linear Quadratic Regulator.
 
     Args:
@@ -429,14 +443,7 @@ def ilqr(cost,
       dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
       x0: initial_state - 1D np array of shape (n, ).
       U: initial_controls - 2D np array of shape (T, m).
-      maxiter: maximum iterations.
-      grad_norm_threshold: tolerance for stopping optimization.
-      make_psd: whether to zero negative eigenvalues after quadratization.
-      psd_delta: The delta value to make the problem PSD. Specifically, it will
-        ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
-        with respect to state and control are always positive definite.
-      alpha_0: initial line search value.
-      alpha_min: minimum line search value.
+      hyperparams - hyperparameters for the algorithm.
 
     Returns:
       X: optimal state trajectory - nd array of shape (T+1, n).
@@ -451,8 +458,8 @@ def ilqr(cost,
     dynamics_fn, dynamics_args = custom_derivatives.closure_convert(
         dynamics, x0, U[0], 0)
     return ilqr_base(cost_fn, dynamics_fn, x0, U, tuple(cost_args),
-                     tuple(dynamics_args), maxiter, grad_norm_threshold, make_psd,
-                     psd_delta, alpha_0, alpha_min)
+                     tuple(dynamics_args), hyperparams.maxiter, hyperparams.grad_norm_threshold, hyperparams.make_psd,
+                     hyperparams.psd_delta, hyperparams.alpha_0, hyperparams.alpha_min)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
@@ -840,9 +847,6 @@ def cem(cost,
     return X, U, obj
 
 
-
-
-
 def ilqr_with_cem_warmstart(
         cost,
         dynamics,
@@ -854,7 +858,6 @@ def ilqr_with_cem_warmstart(
         cem_hyperparams=None
 ):
     pass
-
 
 
 @partial(jit, static_argnums=(0, 1, 7))
