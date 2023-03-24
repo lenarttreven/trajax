@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax.lax import cond
 
-from trajax.optimizers import CEMHyperparams, ILQRHyperparams, ilqr_with_cem_warmstart
+from trajax.optimizers import CEMHyperparams, cem
 
 x_dim = 2
 u_dim = 1
@@ -43,17 +43,25 @@ def dynamics_fn(x, u, t):
 ts = jnp.arange(0, T, dt)
 
 start_time = time.time()
-cem_params = CEMHyperparams(max_iter=10, sampling_smoothing=0.0, num_samples=200, evolution_smoothing=0.0,
+cem_params = CEMHyperparams(max_iter=10, sampling_smoothing=0.0, num_samples=500, evolution_smoothing=0.0,
                             elite_portion=0.1)
-ilqr_params = ILQRHyperparams(maxiter=100)
 
-out = ilqr_with_cem_warmstart(cost_fn, dynamics_fn, initial_state, initial_actions, control_low=control_low,
-                              control_high=control_high, ilqr_hyperparams=ilqr_params, cem_hyperparams=cem_params)
+out = cem(cost_fn, dynamics_fn, initial_state, initial_actions, control_low=control_low, control_high=control_high,
+          hyperparams=cem_params)
 print('Cost: ', out[2])
 print("Time taken: ", time.time() - start_time)
 
-plt.plot(ts, out.xs[:-1, :], label="xs")
+start_time = time.time()
+cem_params = CEMHyperparams(max_iter=10, sampling_smoothing=0.0, num_samples=500, evolution_smoothing=0.0,
+                            elite_portion=0.1)
+
+out = cem(cost_fn, dynamics_fn, initial_state, initial_actions, control_low=control_low, control_high=control_high,
+          hyperparams=cem_params)
+print('Cost: ', out[2])
+print("Time taken: ", time.time() - start_time)
+
+plt.plot(ts, out[0][:-1, :], label="xs")
 plt.title("iLQR warmup")
-plt.plot(ts, out.us, label="us")
+plt.plot(ts, out[1], label="us")
 plt.legend()
 plt.show()
