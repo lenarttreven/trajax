@@ -441,11 +441,7 @@ class ILQRResult(NamedTuple):
     it: float
 
 
-def ilqr(cost,
-         dynamics,
-         x0,
-         U,
-         hyperparams=ILQRHyperparams()):
+def ilqr(cost, dynamics, x0, U, hyperparams=ILQRHyperparams()):
     """Iterative Linear Quadratic Regulator.
 
     Args:
@@ -471,6 +467,159 @@ def ilqr(cost,
         *ilqr_base(cost_fn, dynamics_fn, x0, U, tuple(cost_args), tuple(dynamics_args), hyperparams.maxiter,
                    hyperparams.grad_norm_threshold, hyperparams.make_psd, hyperparams.psd_delta, hyperparams.alpha_0,
                    hyperparams.alpha_min))
+
+
+class ILQR:
+    def __init__(self, cost, dynamics):
+        self.cost = cost
+        self.dynamics = dynamics
+        # Cost and dynamics functions looks like this:
+        """
+            def f(x, u, t, fun_params):
+                return value
+        """
+
+    @partial(jit, static_argnums=0)
+    def ilqr(self, cost_params, dynamics_params, x0, U, hyperparams: ILQRHyperparams):
+        return ILQRResult(
+            *self.ilqr_base(cost_params, dynamics_params, x0, U, hyperparams.maxiter, hyperparams.grad_norm_threshold,
+                            hyperparams.make_psd, hyperparams.psd_delta, hyperparams.alpha_0, hyperparams.alpha_min))
+
+    def _rollout(self, dynamics_params, U, x0):
+        def dynamics_for_scan(x, ut):
+            u, t = ut
+            x_next = self.dynamics(x, u, t, dynamics_params)
+            return x_next, x_next
+
+        return np.vstack((x0, lax.scan(dynamics_for_scan, x0, (U, np.arange(U.shape[0])))[1]))
+
+    def ddp_rollout(self, dynamics_params, X, U, K, k, alpha):
+        """Rollouts used in Differential Dynamic Programming.
+
+        Args:
+          dynamics_params: parameters of the dynamics function s.t. dynamics(x, u, t, dynamics_params) returns next state.
+          X: [T+1, n] current state trajectory.
+          U: [T, m] current control sequence.
+          K: [T, m, n] state feedback gains.
+          k: [T, m] affine terms in state feedback.
+          alpha: line search parameter.
+
+        Returns:
+          Xnew, Unew: updated state trajectory and control sequence, via:
+
+            del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
+            u = U[t] + del_u
+            x = dynamics(Xnew[t], u, t)
+        """
+        n = X.shape[1]
+        T, m = U.shape
+        Xnew = np.zeros((T + 1, n))
+        Unew = np.zeros((T, m))
+        Xnew = Xnew.at[0].set(X[0])
+
+        def body(t, inputs):
+            Xnew, Unew = inputs
+            del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
+            u = U[t] + del_u
+            x = self.dynamics(Xnew[t], u, t, dynamics_params)
+            Unew = Unew.at[t].set(u)
+            Xnew = Xnew.at[t + 1].set(x)
+            return Xnew, Unew
+
+        return lax.fori_loop(0, T, body, (Xnew, Unew))
+
+    def line_search_ddp(self, cost_params, dynamics_params, X, U, K, k, obj, alpha_0=1.0, alpha_min=0.00005):
+        """Performs line search with respect to DDP rollouts."""
+
+        obj = np.where(np.isnan(obj), np.inf, obj)
+        costs = partial(evaluate, self.cost)
+
+        total_cost = lambda X, U: np.sum(costs(X, pad(U), cost_params))
+
+        def line_search(inputs):
+            """Line search to find improved control sequence."""
+            _, _, _, alpha = inputs
+            Xnew, Unew = self.ddp_rollout(dynamics_params, X, U, K, k, alpha)
+            obj_new = total_cost(Xnew, Unew)
+            alpha = 0.5 * alpha
+            obj_new = np.where(np.isnan(obj_new), obj, obj_new)
+
+            # Only return new trajs if leads to a strict cost decrease
+            X_return = np.where(obj_new < obj, Xnew, X)
+            U_return = np.where(obj_new < obj, Unew, U)
+
+            return X_return, U_return, np.minimum(obj_new, obj), alpha
+
+        return lax.while_loop(
+            lambda inputs: np.logical_and(inputs[2] >= obj, inputs[3] > alpha_min),
+            line_search, (X, U, obj, alpha_0))
+
+    def ilqr_base(self, cost_params, dynamics_params, x0, U, maxiter, grad_norm_threshold, make_psd, psd_delta, alpha_0,
+                  alpha_min):
+        T, m = U.shape
+        n = x0.shape[0]
+
+        roll = partial(self._rollout, dynamics_params)
+        quadratizer = quadratize(self.cost)
+        dynamics_jacobians = linearize(self.dynamics)
+        cost_gradients = linearize(self.cost)
+
+        evaluator = partial(evaluate, self.cost)
+        psd = vmap(partial(project_psd_cone, delta=psd_delta))
+
+        X = roll(U, x0)
+        timesteps = np.arange(X.shape[0])
+        obj = np.sum(evaluator(X, pad(U), cost_params))
+
+        def get_lqr_params(X, U):
+            Q, R, M = quadratizer(X, pad(U), timesteps, cost_params)
+
+            Q = lax.cond(make_psd, Q, psd, Q, lambda x: x)
+            R = lax.cond(make_psd, R, psd, R, lambda x: x)
+
+            q, r = cost_gradients(X, pad(U), timesteps, cost_params)
+            A, B = dynamics_jacobians(X, pad(U), np.arange(T + 1), dynamics_params)
+
+            return (Q, q, R, r, M, A, B)
+
+        c = np.zeros((T, n))  # assumes trajectory is always dynamically feasible.
+
+        gradient = np.full((T, m), np.inf)
+        adjoints = np.zeros((T, n))
+
+        def body(inputs):
+            """Solves LQR subproblem and returns updated trajectory."""
+            X, U, obj, alpha, gradient, adjoints, lqr, iteration = inputs
+
+            Q, q, R, r, M, A, B = lqr
+
+            K, k, _, _ = tvlqr(Q, q, R, r, M, A, B, c)
+            X, U, obj, alpha = self.line_search_ddp(cost_params, dynamics_params, X, U, K, k, obj,
+                                                    alpha_0, alpha_min)
+            gradient, adjoints, _ = adjoint(A, B, q, r)
+            # print("Iteration=%d, Objective=%f, Alpha=%f, Grad-norm=%f\n" %
+            #      (device_get(iteration), device_get(obj), device_get(alpha),
+            #       device_get(np.linalg.norm(gradient))))
+
+            lqr = get_lqr_params(X, U)
+            iteration = iteration + 1
+            return X, U, obj, alpha, gradient, adjoints, lqr, iteration
+
+        def continuation_criterion(inputs):
+            _, _, _, alpha, gradient, _, _, iteration = inputs
+            grad_norm = np.linalg.norm(gradient)
+            grad_norm = np.where(np.isnan(grad_norm), np.inf, grad_norm)
+
+            return np.logical_and(
+                iteration < maxiter,
+                np.logical_and(grad_norm > grad_norm_threshold, alpha > alpha_min))
+
+        lqr = get_lqr_params(X, U)
+        X, U, obj, _, gradient, adjoints, lqr, it = lax.while_loop(
+            continuation_criterion, body,
+            (X, U, obj, alpha_0, gradient, adjoints, lqr, 0))
+
+        return X, U, obj, gradient, adjoints, lqr, it
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
