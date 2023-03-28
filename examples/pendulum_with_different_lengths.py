@@ -53,12 +53,12 @@ dynamics_params = jnp.array(5.0)
 cost_params = dynamics_params
 
 start_time = time.time()
-out = ilqr.ilqr(dynamics_params, cost_params, initial_state, initial_actions, ilqr_params)
+out = ilqr.solve(dynamics_params, cost_params, initial_state, initial_actions, ilqr_params)
 print('Cost: ', out[2])
 print("Time taken: ", time.time() - start_time)
 
 start_time = time.time()
-out = ilqr.ilqr(dynamics_params, cost_params, initial_state, initial_actions, ilqr_params)
+out = ilqr.solve(dynamics_params, cost_params, initial_state, initial_actions, ilqr_params)
 print('Cost: ', out[2])
 print("Time taken: ", time.time() - start_time)
 

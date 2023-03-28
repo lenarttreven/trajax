@@ -480,7 +480,7 @@ class ILQR:
         """
 
     @partial(jit, static_argnums=0)
-    def ilqr(self, cost_params, dynamics_params, x0, U, hyperparams: ILQRHyperparams):
+    def solve(self, cost_params, dynamics_params, x0, U, hyperparams: ILQRHyperparams):
         return ILQRResult(
             *self.ilqr_base(cost_params, dynamics_params, x0, U, hyperparams.maxiter, hyperparams.grad_norm_threshold,
                             hyperparams.make_psd, hyperparams.psd_delta, hyperparams.alpha_0, hyperparams.alpha_min))
