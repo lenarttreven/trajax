@@ -65,6 +65,62 @@ plt.plot(ts, out.us, label="us")
 plt.legend()
 plt.show()
 
+import matplotlib.collections as mcoll
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def multicolored_lines(fig, ax, x, y, z):
+    """
+    http://nbviewer.ipython.org/github/dpsanders/matplotlib-examples/blob/master/colorline.ipynb
+    http://matplotlib.org/examples/pylab_examples/multicolored_line.html
+    """
+    lc = colorline(x, y, z=z, cmap='Greens')
+    fig.colorbar(lc, ax=ax, label=r'$\sum_{i}\sigma_i^2(x(t), u(t))$')
+    return fig, ax
+
+
+def colorline(x, y, z=None, cmap='Greens', linewidth=2, alpha=1.0):
+    """
+    http://nbviewer.ipython.org/github/dpsanders/matplotlib-examples/blob/master/colorline.ipynb
+    http://matplotlib.org/examples/pylab_examples/multicolored_line.html
+    Plot a colored line with coordinates x and y
+    Optionally specify colors in the array z
+    Optionally specify a colormap, a norm function and a line width
+    """
+
+    # Default colors equally spaced on [0,1]:
+    if z is None:
+        z = np.linspace(0.0, 1.0, len(x))
+
+    # Special case if a single number:
+    # to check for numerical input -- this is a hack
+    if not hasattr(z, "__iter__"):
+        z = np.array([z])
+
+    z = np.asarray(z)
+
+    segments = make_segments(x, y)
+    lc = mcoll.LineCollection(segments, array=z, cmap=cmap, linewidth=linewidth, alpha=alpha, label='Trajectory')
+
+    ax = plt.gca()
+    ax.add_collection(lc)
+
+    return lc
+
+
+def make_segments(x, y):
+    """
+    Create list of line segments from x and y coordinates, in the correct format
+    for LineCollection: an array of the form numlines x (points per line) x 2 (x
+    and y) array
+    """
+
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    return segments
+
+
 # create a new figure
 fig = plt.figure()
 
@@ -76,7 +132,8 @@ number_of_equidistant_measurements = 4
 repeat_num = int(out.xs.shape[0] / number_of_equidistant_measurements)
 
 # plot the trajectory using blue color and line style '-'
-ax.plot(out.xs[:, 0], out.xs[:, 1], color='black', linestyle='-', alpha=0.3, label='Trajectory')
+fig, ax = multicolored_lines(fig, ax, out.xs[:, 0], out.xs[:, 1], out.xs[:, 0] ** 2 + out.xs[:, 0] ** 2)
+
 ax.scatter(out.xs[:, 0][::repeat_num], out.xs[:, 1][::repeat_num], color='blue', marker='+', s=100, linewidth=2,
            label='Equidistant measurements')
 
@@ -87,8 +144,8 @@ ax.scatter(out.xs[indices, 0], out.xs[indices, 1], color='red',
 dx_0 = jnp.diff(out.xs[:, 0])
 dx_1 = jnp.diff(out.xs[:, 1])
 
-ax.quiver(out.xs[:-1, 0], out.xs[:-1, 1], dx_0, dx_1, angles='xy', scale=1.0, color='black',
-          alpha=0.2)
+ax.quiver(out.xs[:-1, 0][::5], out.xs[:-1, 1][::5], dx_0[::5], dx_1[::5], angles='xy', scale=1.0, color='black',
+          alpha=0.2, linewidth=0)
 
 # set the x and y axis labels
 ax.set_xlabel(r'$x_0$')

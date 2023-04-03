@@ -2,9 +2,10 @@ import time
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from jax import random
 from jax.lax import cond
 
-from trajax.optimizers import CEMHyperparams, ILQRHyperparams, ilqr_with_cem_warmstart
+from trajax.optimizers import CEMHyperparams, ILQRHyperparams, ILQR_with_CEM_warmstart
 
 x_dim = 2
 u_dim = 1
@@ -21,7 +22,7 @@ control_high = jnp.array([5.0]).reshape(1, )
 num_steps = initial_actions.shape[0]
 
 
-def cost_fn(x, u, t):
+def cost_fn(x, u, t, params):
     assert x.shape == (x_dim,) and u.shape == (u_dim,)
 
     def running_cost(x, u, t):
@@ -33,7 +34,7 @@ def cost_fn(x, u, t):
     return cond(t == num_steps, terminal_cost, running_cost, x, u, t)
 
 
-def dynamics_fn(x, u, t):
+def dynamics_fn(x, u, t, params):
     assert x.shape == (x_dim,) and u.shape == (u_dim,)
     x0 = x[1]
     x1 = u[0] + g / l * jnp.sin(x[0])
@@ -42,13 +43,22 @@ def dynamics_fn(x, u, t):
 
 ts = jnp.arange(0, T, dt)
 
-start_time = time.time()
 cem_params = CEMHyperparams(max_iter=10, sampling_smoothing=0.0, num_samples=200, evolution_smoothing=0.0,
                             elite_portion=0.1)
-ilqr_params = ILQRHyperparams(maxiter=100,)
+ilqr_params = ILQRHyperparams(maxiter=100, )
 
-out = ilqr_with_cem_warmstart(cost_fn, dynamics_fn, initial_state, initial_actions, control_low=control_low,
-                              control_high=control_high, ilqr_hyperparams=ilqr_params, cem_hyperparams=cem_params)
+key = random.PRNGKey(0)
+optimizer = ILQR_with_CEM_warmstart(cost_fn, dynamics_fn)
+
+start_time = time.time()
+out = optimizer.solve(None, None, initial_state, initial_actions, control_low=control_low, control_high=control_high,
+                      ilqr_hyperparams=ilqr_params, cem_hyperparams=cem_params, random_key=key)
+print('Cost: ', out[2])
+print("Time taken: ", time.time() - start_time)
+
+start_time = time.time()
+out = optimizer.solve(None, None, initial_state, initial_actions, control_low=control_low, control_high=control_high,
+                      ilqr_hyperparams=ilqr_params, cem_hyperparams=cem_params, random_key=key)
 print('Cost: ', out[2])
 print("Time taken: ", time.time() - start_time)
 

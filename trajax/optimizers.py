@@ -938,6 +938,90 @@ class CEM_scan_output(NamedTuple):
     best_costs: np.ndarray
 
 
+class CEM:
+    def __init__(self, cost, dynamics):
+        self.cost = cost
+        self.dynamics = dynamics
+        # Cost and dynamics functions looks like this:
+        """
+            def f(x, u, t, fun_params):
+                return value
+        """
+
+    def _rollout(self, dynamics_params, U, x0):
+        def dynamics_for_scan(x, ut):
+            u, t = ut
+            x_next = self.dynamics(x, u, t, dynamics_params)
+            return x_next, x_next
+
+        return np.vstack((x0, lax.scan(dynamics_for_scan, x0, (U, np.arange(U.shape[0])))[1]))
+
+    def objective(self, cost_params, dynamics_params, U, x0):
+        return np.sum(self.evaluate(cost_params, self._rollout(dynamics_params, U, x0), pad(U), ))
+
+    def evaluate(self, cost_params, X, U):
+        """Evaluates cost(x, u, t) along a trajectory.
+
+        Args:
+          cost_params: cost params with signature self.cost(x, u, t, cost_params)
+          X: (T, n) state trajectory.
+          U: (T, m) control sequence.
+          *args: args for cost_fn
+
+        Returns:
+          objectives: (T, ) array of objectives.
+        """
+        timesteps = np.arange(X.shape[0])
+        return vectorize(self.cost)(X, U, timesteps, cost_params)
+
+    @partial(jit, static_argnums=(0, 7))
+    def solve(self, cost_params, dynamics_params, x0: jax.Array, U: jax.Array, control_low: jax.Array,
+              control_high: jax.Array, hyperparams: CEMHyperparams, random_key: random.PRNGKey):
+        mean = np.array(U)
+        stdev = np.array([(control_high - control_low) / 2.] * U.shape[0])
+
+        def scan_body(carry: CEM_scan_carry, _):
+            random_key, rng = random.split(carry.random_key)
+            controls = gaussian_samples(rng, carry.mean, carry.stdev, control_low, control_high,
+                                        hyperparams)
+            costs = vmap(self.objective, in_axes=(None, None, 0, None))(cost_params, dynamics_params, controls, x0)
+            mean, stdev = cem_update_mean_stdev(carry.mean, carry.stdev, controls, costs,
+                                                hyperparams)
+            best_index = np.argmin(costs)
+            best_control, best_cost = controls[best_index], costs[best_index]
+            return CEM_scan_carry(mean=mean, stdev=stdev, random_key=random_key), CEM_scan_output(
+                best_controls=best_control, best_costs=best_cost)
+
+        initial_carry = CEM_scan_carry(mean, stdev, random_key)
+        last_carry, output = lax.scan(scan_body, initial_carry, None, length=hyperparams.max_iter)
+
+        best_index = np.argmin(output.best_costs)
+        U = output.best_controls[best_index]
+        obj = output.best_costs[best_index]
+
+        X = self._rollout(dynamics_params, U, x0)
+        return X, U, obj
+
+
+class ILQR_with_CEM_warmstart:
+    def __init__(self, cost, dynamics):
+        self.ilqr = ILQR(cost, dynamics)
+        self.cem = CEM(cost, dynamics)
+        # Cost and dynamics functions looks like this:
+        """
+            def f(x, u, t, fun_params):
+                return value
+        """
+
+    @partial(jit, static_argnums=(0, 7))
+    def solve(self, cost_params, dynamics_params, x0: jax.Array, U: jax.Array, control_low: jax.Array,
+              control_high: jax.Array, cem_hyperparams: CEMHyperparams, random_key: random.PRNGKey,
+              ilqr_hyperparams: ILQRHyperparams):
+        X, U, obj = self.cem.solve(cost_params, dynamics_params, x0, U, control_low, control_high,
+                                   cem_hyperparams, random_key)
+        return self.ilqr.solve(cost_params, dynamics_params, x0, U, ilqr_hyperparams)
+
+
 @partial(jit, static_argnums=(0, 1, 7))
 def cem(cost,
         dynamics,
